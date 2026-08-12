@@ -1,0 +1,20 @@
+{
+  "name": "autonomous-ai-creator",
+  "version": "1.0.0",
+  "description": "An autonomous AI & technology persona agent that discovers topics, exercises editorial judgment, and publishes a feed on its own over time.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3",
+    "uuid": "^9.0.1",
+    "dotenv": "^16.4.5"
+  }
+}

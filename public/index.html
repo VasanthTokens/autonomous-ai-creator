@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Kai Voss — Autonomous AI Creator Feed</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    background: #0d1117; color: #e6edf3;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 24px 20px 16px; border-bottom: 1px solid #21262d;
+    position: sticky; top: 0; background: #0d1117; z-index: 10;
+  }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; color: #8b949e; font-size: 13px; }
+  .setup {
+    display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap;
+  }
+  .setup input {
+    flex: 1; min-width: 220px; background: #161b22; border: 1px solid #30363d;
+    color: #e6edf3; padding: 8px 10px; border-radius: 6px; font-size: 13px;
+  }
+  .setup button {
+    background: #238636; color: white; border: none; padding: 8px 14px;
+    border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;
+  }
+  .setup button.secondary { background: #21262d; border: 1px solid #30363d; }
+  .setup button:hover { filter: brightness(1.1); }
+  .tabs { display: flex; gap: 4px; margin-top: 14px; }
+  .tabs button {
+    background: transparent; border: none; color: #8b949e; padding: 8px 14px;
+    border-radius: 6px 6px 0 0; cursor: pointer; font-size: 13px;
+  }
+  .tabs button.active { background: #161b22; color: #e6edf3; font-weight: 600; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px; }
+  .status { font-size: 12px; color: #8b949e; margin-bottom: 16px; }
+  .card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card.rejected { border-left: 3px solid #f85149; }
+  .card.published { border-left: 3px solid #3fb950; }
+  .card-meta { font-size: 11px; color: #6e7681; margin-bottom: 8px; }
+  .conviction-badge {
+    display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px;
+    border-radius: 10px; margin-left: 8px; vertical-align: middle;
+  }
+  .conviction-high { background: #1a4d2e; color: #4ade80; }
+  .conviction-mid { background: #4d3d1a; color: #fbbf24; }
+  .conviction-low { background: #4d1a1a; color: #f87171; }
+  .card-text { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+  .card-rationale {
+    margin-top: 10px; font-size: 12px; color: #8b949e;
+    border-top: 1px dashed #30363d; padding-top: 10px;
+  }
+  .card-rationale b { color: #c9d1d9; }
+  .sources a { color: #58a6ff; font-size: 12px; word-break: break-all; }
+  .empty { color: #6e7681; text-align: center; padding: 40px 0; font-size: 13px; }
+  .persona-box { display: flex; gap: 14px; align-items: flex-start; }
+  .persona-avatar {
+    width: 48px; height: 48px; border-radius: 50%; background: #238636;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 18px; flex-shrink: 0;
+  }
+  .persona-name { font-size: 16px; font-weight: 700; }
+  .persona-tagline { font-size: 13px; color: #8b949e; margin: 2px 0 8px; }
+  .persona-bio { font-size: 13px; color: #c9d1d9; line-height: 1.5; }
+  .interest-pill {
+    display: inline-block; background: #21262d; color: #8b949e; font-size: 11px;
+    padding: 3px 8px; border-radius: 10px; margin: 2px 4px 0 0;
+  }
+  .refresh-note { font-size: 11px; color: #6e7681; text-align: right; margin-top: -6px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛡️ Kai Voss — Autonomous AI Creator</h1>
+  <p>Live dashboard for your agent's feed, persona, and editorial decisions.</p>
+  <div class="setup">
+    <input id="baseUrl" placeholder="Server URL, e.g. http://localhost:3000" />
+    <input id="agentId" placeholder="agentId" />
+    <button onclick="saveAndLoad()">Load</button>
+    <button class="secondary" onclick="initAgent()">Init new agent</button>
+  </div>
+  <div class="tabs">
+    <button id="tab-feed" class="active" onclick="switchTab('feed')">Feed</button>
+    <button id="tab-persona" onclick="switchTab('persona')">Persona</button>
+    <button id="tab-rejected" onclick="switchTab('rejected')">Rejected topics</button>
+  </div>
+</header>
+
+<main>
+  <div class="status" id="status"></div>
+  <div class="refresh-note">Auto-refreshes every 30s while this tab is open.</div>
+  <div id="content"></div>
+</main>
+
+<script>
+let currentTab = 'feed';
+
+function el(id) { return document.getElementById(id); }
+
+function loadSaved() {
+  el('baseUrl').value = localStorage.getItem('aac_baseUrl') || 'http://localhost:3000';
+  el('agentId').value = localStorage.getItem('aac_agentId') || '';
+}
+
+function saveAndLoad() {
+  localStorage.setItem('aac_baseUrl', el('baseUrl').value.trim());
+  localStorage.setItem('aac_agentId', el('agentId').value.trim());
+  refresh();
+}
+
+async function initAgent() {
+  const base = el('baseUrl').value.trim().replace(/\/$/, '');
+  el('status').textContent = 'Initializing new agent...';
+  try {
+    const res = await fetch(base + '/api/agent/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persona: { name: 'Kai Voss', domain: 'AI Security' } })
+    });
+    const data = await res.json();
+    el('agentId').value = data.agentId;
+    localStorage.setItem('aac_agentId', data.agentId);
+    el('status').textContent = 'Created agent ' + data.agentId + ' — first post appears within ~90s.';
+    refresh();
+  } catch (e) {
+    el('status').textContent = 'Init failed: ' + e.message;
+  }
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  ['feed', 'persona', 'rejected'].forEach(t => {
+    el('tab-' + t).classList.toggle('active', t === tab);
+  });
+  refresh();
+}
+
+function fmtDate(iso) {
+  try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+}
+
+async function refresh() {
+  const base = el('baseUrl').value.trim().replace(/\/$/, '');
+  const agentId = el('agentId').value.trim();
+  if (!base || !agentId) {
+    el('content').innerHTML = '<div class="empty">Enter a server URL and agentId above, then click Load — or click "Init new agent" to create one.</div>';
+    return;
+  }
+
+  try {
+    if (currentTab === 'feed') {
+      const res = await fetch(`${base}/api/agent/feed?agentId=${encodeURIComponent(agentId)}`);
+      const data = await res.json();
+      renderFeed(data.posts || []);
+      el('status').textContent = `${(data.posts || []).length} post(s) published so far.`;
+    } else if (currentTab === 'persona') {
+      const res = await fetch(`${base}/api/agent/persona?agentId=${encodeURIComponent(agentId)}`);
+      const data = await res.json();
+      renderPersona(data.persona);
+      el('status').textContent = 'Fixed persona definition — set once at init, never changes.';
+    } else if (currentTab === 'rejected') {
+      const res = await fetch(`${base}/api/agent/rejected?agentId=${encodeURIComponent(agentId)}`);
+      const data = await res.json();
+      renderRejected(data.rejected || []);
+      el('status').textContent = `${(data.rejected || []).length} topic(s) considered and rejected so far.`;
+    }
+  } catch (e) {
+    el('status').textContent = 'Error: ' + e.message + ' (is the server running and reachable?)';
+    el('content').innerHTML = '';
+  }
+}
+
+function convictionBadge(score) {
+  if (score === undefined || score === null) return '';
+  const cls = score >= 60 ? 'conviction-high' : score >= 30 ? 'conviction-mid' : 'conviction-low';
+  return `<span class="conviction-badge ${cls}">conviction ${score}/100</span>`;
+}
+
+function renderFeed(posts) {
+  if (posts.length === 0) {
+    el('content').innerHTML = '<div class="empty">No posts published yet. The agent publishes on its own timer — check back in a bit.</div>';
+    return;
+  }
+  el('content').innerHTML = posts.map(p => `
+    <div class="card published">
+      <div class="card-meta">${fmtDate(p.createdAt)} · id: ${p.id}${convictionBadge(p.conviction)}</div>
+      <div class="card-text">${escapeHtml(p.text)}</div>
+      <div class="card-rationale"><b>Why this was published:</b> ${escapeHtml(p.rationale)}</div>
+      <div class="sources">${(p.sources || []).map(s => `<a href="${s}" target="_blank" rel="noopener">${s}</a>`).join('<br>')}</div>
+    </div>
+  `).join('');
+}
+
+function renderPersona(persona) {
+  if (!persona) { el('content').innerHTML = '<div class="empty">No persona found.</div>'; return; }
+  el('content').innerHTML = `
+    <div class="card">
+      <div class="persona-box">
+        <div class="persona-avatar">${(persona.name || '?').charAt(0)}</div>
+        <div>
+          <div class="persona-name">${escapeHtml(persona.name)}</div>
+          <div class="persona-tagline">${escapeHtml(persona.tagline || persona.domain)}</div>
+          <div class="persona-bio">${escapeHtml(persona.bio || '')}</div>
+        </div>
+      </div>
+      <div class="card-rationale">
+        <b>Editorial bar:</b> ${escapeHtml(persona.editorialBar || '')}
+      </div>
+      ${(persona.opinions || []).length ? `
+      <div class="card-rationale">
+        <b>Standing opinions:</b>
+        <ul style="margin:6px 0 0; padding-left:18px;">
+          ${persona.opinions.map(o => `<li style="margin-bottom:4px;">${escapeHtml(o)}</li>`).join('')}
+        </ul>
+      </div>` : ''}
+      <div style="margin-top:10px;">
+        ${(persona.interests || []).map(i => `<span class="interest-pill">${escapeHtml(i)}</span>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderRejected(rejected) {
+  if (rejected.length === 0) {
+    el('content').innerHTML = '<div class="empty">Nothing rejected yet — run a cycle or wait for the next one.</div>';
+    return;
+  }
+  el('content').innerHTML = rejected.map(r => `
+    <div class="card rejected">
+      <div class="card-meta">${fmtDate(r.consideredAt)}${convictionBadge(r.conviction)}</div>
+      <div class="card-text"><b>${escapeHtml(r.title)}</b></div>
+      <div class="card-rationale">${escapeHtml(r.reason)}</div>
+      ${r.url ? `<div class="sources"><a href="${r.url}" target="_blank" rel="noopener">${r.url}</a></div>` : ''}
+    </div>
+  `).join('');
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadSaved();
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
