@@ -1,128 +1,105 @@
-# Autonomous AI Creator
+Autonomous AI Creator — Kai Voss
 
-An autonomous AI & technology persona that discovers topics, exercises
-editorial judgment, writes in a consistent voice, remembers what it has
-published, and keeps publishing over time — with zero human input after a
-single initialization call.
+An autonomous AI & technology persona that discovers topics, exercises editorial judgment, writes in a consistent voice, remembers what it has published, and keeps publishing over time — with zero human input after a single initialization call.
 
-## How it satisfies each requirement
+What it does (plain terms)
 
-| Requirement | Where it happens |
-|---|---|
-| **Topic discovery** | `src/discovery.js` pulls live candidates from two keyless public APIs: Hacker News (Algolia search, by recency) and arXiv (cs.AI / cs.CR / cs.LG, newest first). No API key required for this part. |
-| **Editorial judgment** | `src/editorial.js` scores every candidate against the persona's fixed interest keywords, recency, and (for HN) engagement, then applies a hard bar. Anything with zero keyword overlap or that's too stale is **rejected with a stated reason** and logged — never silently dropped. See `GET /api/agent/rejected`. |
-| **Consistent persona** | `src/persona.js` fixes name, domain, bio, voice (tone, sentence style, structure, signature phrases, closing habit) and an explicit editorial bar **once at init**, and every cycle reuses the same object — nothing about voice or interests drifts over time. |
-| **Memory** | `src/memory.js` persists a JSON file per agent (`data/<agentId>.json`) holding every published post, every rejected topic, and a fingerprint set of everything ever considered, so the agent never re-covers or re-litigates the same story. |
-| **Autonomous publishing over time** | `src/scheduler.js` runs one cycle almost immediately after init (so the feed isn't empty for the first hour), then re-schedules itself on a **randomized cadence** (default 45–120 min, configurable) indefinitely — no cron job or external trigger needed, and it survives process restarts (`resumeAll`). |
-| **Publishing rationale** | Every post built in `src/cycle.js` includes why the topic was picked, why it's relevant now, and its source URL(s), returned directly in the `rationale` and `sources` fields of `GET /api/agent/feed`. |
+You initialize it once. From then on, on its own timer, it:
 
-### LLM usage (optional, with graceful fallback)
+Reads live tech news (Hacker News + arXiv)
+Judges each story against a fixed persona's beat and standards
+Rejects most of them, with a stated reason
+Writes about the one that clears the bar, in a consistent voice — occasionally taking a real stance, not just summarizing
+Remembers everything it's covered so it never repeats itself
+Sets its own next wake-up time and repeats, indefinitely
+Core capabilities — implementation map
+Capability	Where
+Topic discovery from a live source	src/discovery.js — Hacker News + arXiv APIs, no key needed
+Editorial judgment (rejects things)	src/editorial.js — keyword/recency/context scoring + hard bar
+Consistent persona	src/persona.js — fixed identity, voice, interests, opinions
+Memory (no repetition)	src/memory.js — per-agent JSON file, fingerprinted topics
+Autonomous publishing over time	src/scheduler.js — self-rescheduling randomized timer
+Rationale + sources on every post	src/cycle.js — built into every saved post
+POST /api/agent/init → {agentId}	src/server.js
+GET /api/agent/feed → {posts:[...]}	src/server.js
+Every change made during development (chronological)
+1. Initial build
 
-If you set `ANTHROPIC_API_KEY`, the agent uses Claude (`claude-sonnet-4-6`)
-to actually draft each post and rationale in-character (`src/generator.js`,
-`generateWithClaude`). **If no key is set, it automatically falls back to a
-deterministic, persona-voiced template** so the whole system still runs
-standalone with zero configuration — this satisfies "simulated publishing is
-acceptable."
+Full project scaffolded: Express server, discovery (HN + arXiv), editorial scoring, rule-based + Claude-backed post generation, JSON file memory, self-rescheduling scheduler, and the two core API endpoints plus bonus GET /api/agent/persona and GET /api/agent/rejected for transparency.
 
-## API
+2. Editorial false-positive fix
 
-### `POST /api/agent/init`
-Call exactly once.
+Problem found during testing: the agent published a story about an iPhone jailbreak because the word "jailbreak" matched the persona's security keyword list — even though it had nothing to do with AI.
 
-```json
-{ "persona": { "name": "Ada", "domain": "AI Security" } }
-```
-`persona` is optional — omit it to get a default built-in persona
-(`Kai Voss`, AI Security). You can also pass one of the built-in keys
-directly: `{"persona": "ml-engineer"}` or `{"persona": "dev-advocate"}`.
+Fix (src/editorial.js): added an AI-context anchor-word check. Ambiguous keywords (jailbreak, exploit, CVE, vulnerability, adversarial, guardrail, red team, etc.) now only count as a real match if the story also contains an AI/ML anchor word (model, LLM, agent, GPT, Claude, etc.), matched with proper word-boundary regex (an earlier version of this fix had a bug where the anchor "ai" matched inside the substring "jailbreak" itself — corrected to use \b word boundaries).
 
-Response:
-```json
-{ "agentId": "abc-123" }
-```
+Rejection reasons were also made keyword-specific and accurate (e.g. the "adversarial" false-positive no longer cites a misleading jailbreak/phone example — each ambiguous keyword has its own correct explanatory example).
 
-### `GET /api/agent/feed?agentId=abc-123`
-The only endpoint you should need to poll afterward.
+3. Frontend dashboard added
 
-```json
-{
-  "posts": [
-    {
-      "id": "p7",
-      "createdAt": "2026-08-07T10:30:00Z",
-      "text": "...",
-      "rationale": "...",
-      "sources": ["https://..."]
-    }
-  ]
-}
-```
-Reverse chronological, previously returned posts stay available, empty
-array if nothing has published yet.
+Problem: the project was API-only — no way to see it working without reading raw JSON in a terminal.
 
-### Bonus transparency endpoints (not required, useful for demoing)
-- `GET /api/agent/persona?agentId=...` — the fixed persona definition
-- `GET /api/agent/rejected?agentId=...` — every topic considered and rejected, with reasons
+Added: public/index.html, a single-page dashboard (dark theme) with three tabs — Feed, Persona, Rejected topics — auto-refreshing every 30s, with an "Init new agent" button built in. src/server.js updated to serve it via express.static.
 
-## Running locally
+4. Standing opinions (persona depth)
 
-```bash
-npm install
-cp .env.example .env      # optionally add ANTHROPIC_API_KEY
-npm start                 # listens on PORT (default 3000)
-```
+Goal: move beyond keyword-filtering into something that reads as genuine editorial judgment, not a templated summarizer.
 
-Then:
-```bash
-curl -X POST http://localhost:3000/api/agent/init \
-  -H 'Content-Type: application/json' \
-  -d '{"persona":{"name":"Ada","domain":"AI Security"}}'
+Added (src/persona.js): each built-in persona now has 5 real standing opinions (e.g. Kai: "skeptical that red-team leaderboard scores translate to real production risk reduction").
 
-curl "http://localhost:3000/api/agent/feed?agentId=<the id you got back>"
-```
-The first post typically appears within 30–90 seconds of init; after that,
-new posts arrive on the randomized cadence set by `CYCLE_MIN_MINUTES` /
-`CYCLE_MAX_MINUTES` (defaults 45–120 minutes) so several posts accumulate
-over a 48-hour evaluation window without looking mechanically periodic.
+Added (src/generator.js): pickRelevantOpinion() selects whichever opinion is actually relevant to the current story by keyword overlap, and weaves it into the post — but only when it's genuinely relevant, not every time (verified: on-topic stories trigger the matching opinion, off-topic ones correctly stay neutral).
 
-## Deploying so it survives 48 hours unattended
+5. Conviction score (visible judgment gradient)
 
-Any always-on Node host works (the free tiers of Render/Railway/Fly.io are
-fine — just make sure it's not a "sleep after inactivity" tier, since the
-scheduler needs the process alive to fire timers):
+Goal: turn accept/reject from a binary black box into something visibly graded.
 
-1. Push this folder to a GitHub repo.
-2. Create a new Web Service pointing at it, build command `npm install`,
-   start command `npm start`.
-3. Set env vars: `ANTHROPIC_API_KEY` (optional), `CYCLE_MIN_MINUTES`,
-   `CYCLE_MAX_MINUTES` if you want a different cadence.
-4. Call `POST /api/agent/init` **once** against the deployed URL before
-   handing it to evaluators.
+Added (src/editorial.js): every candidate — published or rejected — now gets a normalized 0–100 "conviction" score derived from the existing internal scoring math. Surfaced in the feed API response, the rejected log, the rationale text, and as color-coded badges (green/yellow/red) on the dashboard.
 
-Note: the JSON files in `data/` are the agent's memory. On platforms with
-ephemeral/non-persistent disks, attach a persistent volume mounted at
-`./data` (or swap `src/memory.js` for a DB) so memory and unpublished
-scheduling state survive redeploys — `resumeAll()` already re-arms any
-agent it finds on disk at boot.
+6. Free LLM option (Groq)
 
-## Tuning the cadence for the 48-hour window
+Problem: Anthropic's API costs money; wanted a genuinely free way to get real LLM-written posts instead of only the rule-based fallback.
 
-Defaults produce roughly 12–60 posts across 48 hours. To guarantee a
-denser, more demo-friendly feed, lower `CYCLE_MIN_MINUTES`/
-`CYCLE_MAX_MINUTES` (e.g. 15–30) before deploying.
+Added (src/generator.js): a second provider path using Groq's free API tier (OpenAI-compatible request format, llama-3.3-70b-versatile model). Provider priority order: Anthropic (if key set) → Groq (if key set) → rule-based fallback — each step verified independently, including graceful fallthrough on an invalid/failing key at any stage. .env.example and src/cycle.js (rationale text) updated to reflect which provider actually wrote each post.
 
-## Project structure
+7. Local environment troubleshooting
 
-```
+Walked through: Node.js not installed (installed via winget install OpenJS.NodeJS.LTS), missing dotenv module (npm install in the correct project folder), PowerShell's curl alias conflict (switched to Invoke-RestMethod), confirmed agentId vs. post id mix-ups, and verified the full discover → judge → write → remember cycle live against real Hacker News/arXiv data multiple times, including with the free Groq LLM active (confirmed working: a real post with conviction 40/100, sourced from arXiv, referencing a genuinely relevant standing opinion).
+
+Also tested public exposure via ngrok http 3000 for a quick live demo (noted as unsuitable for long unattended runs since it depends on the laptop staying on — real hosting is the right move for that).
+
+Project structure
 src/
-  server.js      HTTP endpoints (init, feed, + bonus persona/rejected)
+  server.js      HTTP endpoints (init, feed, + bonus persona/rejected) + serves dashboard
   scheduler.js    autonomous, self-rescheduling cycle loop
   cycle.js        one full think-cycle: discover -> judge -> write -> remember
   discovery.js    live topic sourcing (Hacker News, arXiv)
-  editorial.js    scoring + accept/reject judgment
-  generator.js    Claude-backed writer with rule-based fallback
-  persona.js      persona definitions (voice, interests, editorial bar)
+  editorial.js    scoring + accept/reject judgment + conviction score
+  generator.js    Anthropic / Groq / rule-based writer, in priority order
+  persona.js      persona definitions (voice, interests, opinions, editorial bar)
   memory.js       JSON file persistence per agent
-data/             per-agent state (created at runtime, gitignore this)
-```
+public/
+  index.html      browser dashboard (Feed / Persona / Rejected tabs)
+data/             per-agent state (created at runtime, gitignored)
+Environment variables (.env)
+ANTHROPIC_API_KEY=      # optional, paid, tried first if set
+GROQ_API_KEY=            # optional, free, tried second if set
+PORT=3000
+CYCLE_MIN_MINUTES=45
+CYCLE_MAX_MINUTES=120
+
+If neither key is set, the rule-based writer is used — the whole thing runs fully standalone at zero cost.
+
+Running locally
+bash
+npm install
+cp .env.example .env
+npm start
+
+Open http://localhost:3000, click "Init new agent," wait ~60-90s, check the Feed tab.
+
+Deploying it somewhere always-on
+Push to GitHub (.gitignore already excludes node_modules/, .env, data/*.json)
+Deploy to Render/Railway/Fly — Node runtime, build npm install, start npm start
+Set env vars (GROQ_API_KEY recommended, CYCLE_MIN_MINUTES/MAX for cadence)
+Use an uptime pinger (e.g. UptimeRobot) if on a sleep-on-idle free tier
+Call POST /api/agent/init exactly once against the live URL
